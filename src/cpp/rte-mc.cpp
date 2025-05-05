@@ -56,6 +56,7 @@ int main(int argc, char** argv)
     //----------------------------------------
     auto loc = mesh->tool_localization();
     loc->setMesh(mesh);
+    loc->setExtrapolation(false);
 
     //----------------------------------------
     // 3) Element-wise optical properties (P⁰)
@@ -106,10 +107,9 @@ int main(int argc, char** argv)
     const double pSurv    = doption(_name="psurv");    // roulette survival probability
 
     // Storage for absorbed energy per element
-    //std::map<size_type,double> absorption_map;
     auto absorption_map = V0->element(); // absorption density [1/mm^3]
     absorption_map.on( _range=elements(mesh), _expr=cst(0.0) );
-    std::map<index_t,double> absorption_map_ref;
+
     //----------------------------------------
     // 5) Helper: Henyey–Greenstein sampler
     //----------------------------------------
@@ -133,20 +133,24 @@ int main(int argc, char** argv)
     // 6) Photon‐tracing loop
     //----------------------------------------
 
-    struct Photon { 
-        Photon() : pos(3,0.0), dir(3,0.), weight(1.0) { dir[2] = -1.0; }
-        Photon( node_t<double,3> const& p, node_t<double,3> const& d, double w )
-            : pos(p), dir(d), weight(w) {}
-        Photon( node_t<double,3> const& p, node_t<double,3> const& d )
-            : pos(p), dir(d), weight(1.0) {}
-        Photon( node_t<double,3> const& p )
-            : pos(p), dir(3,0.), weight(1.0) { dir[2] = -1.0; }
+    struct Photon {
+        Photon() : pos_n(3,0.0), pos(), dir(), weight(1.0) { dir[2] = -1.0; }
+        node_t<double,3> pos_n;
+        eigen_vector_type<3> pos,dir;
 
-        node_t<double,3> pos, dir; 
-        double weight; };
+        double weight;
+
+        node_t<double,3> const& getNode()
+        {
+            pos_n[0] = pos[0];
+            pos_n[1] = pos[1];
+            pos_n[2] = pos[2];
+            return pos_n;
+        }
+    };
 
     // ─────────────────────────────────────────────────────────────────────────────
-    //  helper to sample a point uniformly in a disk of given diameter 
+    //  helper to sample a point uniformly in a disk of given diameter
     //  around center (cx,cy,cz)
     // ─────────────────────────────────────────────────────────────────────────────
     auto sample_disk = [&]( double cx, double cy, double cz, double diameter ) {
@@ -159,13 +163,9 @@ int main(int argc, char** argv)
         double theta = 2.*M_PI * v;
         double x = cx + r*std::cos(theta);
         double y = cy + r*std::sin(theta);
-        node_t<double,3> n(3);
-        n[0]=x;
-        n[1]=y;
-        n[2]=cz;
-        return n;
+        return eigen_vector_type<3>{x,y,cz};
     };
-    std::vector<node_t<double,3>> launch_pts;
+    std::vector<eigen_vector_type<3>> launch_pts;
     launch_pts.reserve(Nphotons);
     for ( int i = 0; i < Nphotons; ++i )
         launch_pts.push_back( sample_disk( 0.5, 0.5, 1.0, /*diameter=*/doption(_name="diameter") ) );
@@ -177,23 +177,19 @@ int main(int argc, char** argv)
         std::cout << fmt::format("Tracing photon {}/{}: [{} {} {}]\n", n+1, Nphotons, launch_pts[n][0], launch_pts[n][1], 1.0 );
         // Initialize one photon at cornea center, directed inward
         Photon ph ;
-        
+
         // initiate photon at cornea center
-        ph.pos[0] = launch_pts[n][0]; 
-        ph.pos[1] = launch_pts[n][1];
-        ph.pos[2] = 1.0;
-        ph.dir[0] = 0.0;
-        ph.dir[1] = 0.0;
-        ph.dir[2] = -1.0;
+        ph.pos = launch_pts[n];
+        ph.dir = eigen_vector_type<3>{0.0, 0.0, -1.0}; // pointing inward
         ph.weight = 1.0;
 
         // Locate starting element
         bool    found;
-        
-        index_t eltId;
+
+        index_t eltId, oldElt;
         node_t<double,3> xref(3);
         // change interface to use eigen vectors
-        boost::tie(found, eltId, xref) = loc->searchElement(ph.pos);
+        boost::tie(found, eltId, xref) = loc->searchElement(ph.getNode());
         if ( !found ) continue;
 
         // Trace until killed
@@ -204,70 +200,70 @@ int main(int argc, char** argv)
             double mu_a = mu_a_field.localToGlobal( eltId,0, 0 );
             double mu_s = mu_s_field.localToGlobal( eltId,0, 0 );
             double g    = g_field.localToGlobal( eltId,0, 0 );
-            double n    = n_field.localToGlobal( eltId,0, 0 );
+            double n_index    = n_field.localToGlobal( eltId,0, 0 );
             double mu_t = mu_a + mu_s;
 
-            // 1) Sample step length
+            // 1) Sample step length and move photon
             double s = -std::log( uni(rng) ) / mu_t;
 
+            // keep old position
+            oldElt = eltId;
+            ph.pos += ph.dir * s;
+
+            // check if photon is outside the mesh
+            boost::tie(found, eltId, xref) = loc->searchElement(ph.getNode());
+            if( !found )
+            {
+                std::cout << fmt::format("[Photon {}] outside mesh, weight: {}\n", n, ph.weight);
+                break;  // photon escaped, no deposit
+            }
+
             // 2) Deposit absorbed energy
-            absorption_map.plus_assign(eltId, 0, 0, ph.weight * (mu_a/mu_t));
-            ph.weight -= ph.weight * (mu_a/mu_t);
-            absorption_map_ref[eltId] += ph.weight * (mu_a/mu_t);
+            double absorption = ph.weight * (mu_a/mu_t);
+            absorption_map.plus_assign(oldElt, 0, 0, absorption);
+            //std::cout << fmt::format("[Photon {}] before Element {}: Weight: {} Absorption: {} \n", n, eltId, ph.weight, ph.weight * (mu_a/mu_t));
+            ph.weight -= absorption;
+            if ( ph.weight < 0.0 )
+            {
+                ph.weight = 0.0;
+                break; // photon terminated
+            }
+
             // 3) Russian roulette if weight low
             if ( ph.weight < Wcut )
             {
+                std::cout << fmt::format("[Photon {}] Element {}: Weight: {} Roulette\n", n, eltId, ph.weight);
                 if ( uni(rng) <= pSurv )
                     ph.weight /= pSurv;
                 else
                     break; // photon terminated
             }
 
-            // 4) Move photon
-            ph.pos += ph.dir * s;
-
-            // 5) Re-localize in new element
-            
-            index_t newElt;
-            // TODO : change interface to use eigen vectors
-            boost::tie(found, newElt, xref) = loc->searchElement(ph.pos);
-            if ( !found ) break;
-
-            // 6) Interface REFRACTION/REFLECTION
-            if ( newElt != eltId )
-            {
-                std::vector<index_t> newelt {newElt};
-                double n_old = n_field.localToGlobal( eltId,0, 0 );
-                double n_new = n_field.localToGlobal( newElt,0, 0 );
-
-            }
-            eltId = newElt;
-
             // 7) Scatter
+            // old direction (unit‐length!)
+            auto w = ph.dir.normalized();
+            // pick any vector not collinear with w
+            eigen_vector_type<3> tmp = (std::abs(w[2])<0.9 ? eigen_vector_type<3>{0,0,1}
+                                           : eigen_vector_type<3>{0,1,0});
+            // build an orthonormal basis (u,v,w)
+            auto u = w.cross(tmp).normalized();
+            auto v = w.cross(u);
+
             auto [cost,phi] = sample_phase(g);
             double sint = std::sqrt(1-cost*cost);
             // In local frame (assume dir aligned to z-axis)
-            ph.dir[0] = sint*std::cos(phi);
-            ph.dir[1] = sint*std::sin(phi);
-            ph.dir[2] = cost;
-            VLOG(3) << fmt::format("[Photon {}] Element {}: Position : [{} {} {}] Scattering: [{} {} {}] A: {} \n", n, eltId, ph.pos[0], ph.pos[1], ph.pos[2], ph.dir[0], ph.dir[1], ph.dir[2], absorption_map_ref[eltId]);
+            ph.dir = sint*std::cos(phi)*u
+                   + sint*std::sin(phi)*v
+                   +       cost        *w;
         }
     }
 
-    for( auto it : absorption_map_ref )
-    {
-        auto A = absorption_map.localToGlobal(it.first,0,0);
-        std::cout << fmt::format("Element {}: Absorption = {} A = {}\n", it.first, it.second, A);
-        absorption_map.assign(it.first, 0, 0, it.second);
-    }
-    // normalize
-    
     // Compute total absorption
     // Normalize and output absorption density
     auto absorption_map_norm = V0->element();
     absorption_map_norm.on( _range=elements(mesh), _expr=idv(absorption_map) / (Nphotons * meas())   );
 
-    auto e_ = exporter( _mesh = mesh );
+    auto e_ = exporter( _mesh = mesh, _geo="static" );
     e_->addRegions();
     using namespace std::string_literals;
     e_->add( "absorption", absorption_map, std::set{ "nodal"s, "element"s } );
