@@ -21,7 +21,7 @@
 # Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 #
 #
-feelpp_add_application(rte-mc)
+feelpp_add_application(rte-mc SRCS rte-mc.cpp)
 if ( ENABLE_TEMPLATE_CODE )
 feelpp_add_application(laplacian SRCS laplacian.cpp TESTS INSTALL )
 
