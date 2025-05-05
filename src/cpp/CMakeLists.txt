@@ -21,6 +21,8 @@
 # Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 #
 #
+feelpp_add_application(rte-mc)
+if ( ENABLE_TEMPLATE_CODE )
 feelpp_add_application(laplacian SRCS laplacian.cpp TESTS INSTALL )
 
 
@@ -38,4 +40,5 @@ foreach(binding laplacian)
         feelpp_add_pymodule(${binding} SRCS _${binding}.cpp DESTINATION feelpp/project)
     endif()
 endforeach()
+endif()
 
