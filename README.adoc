@@ -1,6 +1,6 @@
 :feelpp: Feel++
 :cpp: C++
-:project: feelpp-project
+:project: rte-mc
 
 = {feelpp} Template Project
 :author: Christophe Prud’homme
@@ -13,8 +13,8 @@
 :source-highlighter: rouge
 
 image::https://zenodo.org/badge/DOI/10.5281/zenodo.12762669.svg[DOI, link="https://doi.org/10.5281/zenodo.12762669"]
-image::https://img.shields.io/github/v/release/feelpp/feelpp-project[GitHub Release]
-image::https://github.com/feelpp/feelpp-project/workflows/CI/badge.svg[CI]
+image::https://img.shields.io/github/v/release/feelpp/rte-mc[GitHub Release]
+image::https://github.com/feelpp/rte-mc/workflows/CI/badge.svg[CI]
 
 A template repository to kickstart your finite-element applications with Feel++.
 

@@ -183,7 +183,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-deb-${{ matrix.os }}
-          path: build/default/assets/feelpp-project-*
+          path: build/default/assets/rte-mc-*
 
   docker:
     needs: build_code
@@ -211,16 +211,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/feelpp/feelpp-project
+            ghcr.io/feelpp/rte-mc
           tags: |
             type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           labels: |
-            org.opencontainers.image.source="https://github.com/feelpp/feelpp-project"
+            org.opencontainers.image.source="https://github.com/feelpp/rte-mc"
             org.opencontainers.image.licenses="BSD-3-Clause"
-            org.opencontainers.image.title="feelpp-project"
+            org.opencontainers.image.title="rte-mc"
             org.opencontainers.image.description="Finite-element template project based on Feel++."
 
       - name: Extract tag

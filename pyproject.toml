@@ -3,9 +3,9 @@ requires = ["scikit-build-core>=0.11", "pybind11"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "feelpp-project"
+name = "rte-mc"
 version = "4.0.0"
-description = "Feel++ Template Project"
+description = "Rte Mc"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -38,10 +38,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://feelpp.github.io/feelpp-project"
-Documentation = "https://feelpp.github.io/feelpp-project"
-Repository = "https://github.com/feelpp/feelpp-project"
-Issues = "https://github.com/feelpp/feelpp-project/issues"
+Homepage = "https://feelpp.github.io/rte-mc"
+Documentation = "https://feelpp.github.io/rte-mc"
+Repository = "https://github.com/feelpp/rte-mc"
+Issues = "https://github.com/feelpp/rte-mc/issues"
 
 [project.optional-dependencies]
 test = [
