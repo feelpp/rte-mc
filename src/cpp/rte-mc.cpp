@@ -210,15 +210,9 @@ int main(int argc, char** argv)
                 std::vector<index_t> newelt {newElt};
                 double n_old = n_field.element( elt )(0);
                 double n_new = n_field.element( newelt )(0);
-                // TODO: compute face normal 'n_hat' and cosθ
-                // double R = fresnelReflectance(n_old,n_new,cosθ);
-                // if ( uni(rng) < R )
-                //     ph.dir = reflect(ph.dir,n_hat);
-                // else
-                //     ph.dir = refract(ph.dir,n_hat,n_old,n_new);
-                eltId = newElt;
+
             }
-            
+            eltId = newElt;
 
             // 7) Scatter
             auto [cost,phi] = sample_phase(g);
@@ -227,7 +221,7 @@ int main(int argc, char** argv)
             ph.dir[0] = sint*std::cos(phi);
             ph.dir[1] = sint*std::sin(phi);
             ph.dir[2] = cost;
-            std::cout << fmt::format("[Photon {}] Element {}: Position : [{} {} {}] Scattering: [{} {} {}] A: {} \n", n, eltId, ph.pos[0], ph.pos[1], ph.pos[2], ph.dir[0], ph.dir[1], ph.dir[2], A);
+            VLOG(3) << fmt::format("[Photon {}] Element {}: Position : [{} {} {}] Scattering: [{} {} {}] A: {} \n", n, eltId, ph.pos[0], ph.pos[1], ph.pos[2], ph.dir[0], ph.dir[1], ph.dir[2], A);
         }
     }
 
