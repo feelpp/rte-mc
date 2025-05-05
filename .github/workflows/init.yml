@@ -6,14 +6,7 @@ on:
       - '**'
  
 jobs:
-    activate:
-        runs-on: self-ubuntu-24.04
-        if: github.repository != 'feelpp/feelpp-project'
-        steps:
-        - run: echo ok go
-
     initialize:
-        needs: activate
         runs-on: self-ubuntu-24.04
         steps:
         - uses: actions/checkout@v4
