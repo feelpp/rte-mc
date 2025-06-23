@@ -4,7 +4,6 @@
 
 #include <feel/feelalg/matrixpetsc.hpp>
 #include <feel/feelalg/topetsc.hpp>
-#include <feel/feelalg/vectorpetsc.hpp>
 #include <feel/feelcore/environment.hpp>
 #include <feel/feelcore/json.hpp>
 #include <feel/feelcore/ptreetools.hpp>
@@ -65,12 +64,42 @@ int main( int argc, char** argv )
     //----------------------------------------
     auto loc = mesh->tool_localization();
     loc->setMesh( mesh );
+    loc->setExtrapolation( false );
     auto V0 = Pdh<0>( mesh );
     auto mu_a = V0->element();
     auto mu_s = V0->element();
     auto g = V0->element();
     auto n = V0->element();
-    // set default and region-specific properties as before...
+
+    // optical properties
+    mu_a.on( _range = elements( mesh ), _expr = cst( 0.01 ) );
+    mu_s.on( _range = elements( mesh ), _expr = cst( 10.0 ) );
+    g.on( _range = elements( mesh ), _expr = cst( 0.90 ) );
+    n.on( _range = elements( mesh ), _expr = cst( 1.0 ) );
+    mu_a.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 0.02 ) );
+    mu_s.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 20.0 ) );
+    g.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 0.85 ) );
+    n.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 1.376 ) );
+    // aqueous humor
+    mu_a.on( _range = markedelements( mesh, "aqueous" ), _expr = cst( 0.01 ) );
+    mu_s.on( _range = markedelements( mesh, "aqueous" ), _expr = cst( 15.0 ) );
+    g.on( _range = markedelements( mesh, "aqueous" ), _expr = cst( 0.90 ) );
+    n.on( _range = markedelements( mesh, "aqueous" ), _expr = cst( 1.336 ) );
+    // lens
+    mu_a.on( _range = markedelements( mesh, "lens" ), _expr = cst( 0.02 ) );
+    mu_s.on( _range = markedelements( mesh, "lens" ), _expr = cst( 18.0 ) );
+    g.on( _range = markedelements( mesh, "lens" ), _expr = cst( 0.94 ) );
+    n.on( _range = markedelements( mesh, "lens" ), _expr = cst( 1.406 ) );
+    // vitreous
+    mu_a.on( _range = markedelements( mesh, "vitreous" ), _expr = cst( 0.005 ) );
+    mu_s.on( _range = markedelements( mesh, "vitreous" ), _expr = cst( 10.0 ) );
+    g.on( _range = markedelements( mesh, "vitreous" ), _expr = cst( 0.90 ) );
+    n.on( _range = markedelements( mesh, "vitreous" ), _expr = cst( 1.336 ) );
+    // retina
+    mu_a.on( _range = markedelements( mesh, "retina" ), _expr = cst( 0.02 ) );
+    mu_s.on( _range = markedelements( mesh, "retina" ), _expr = cst( 20.0 ) );
+    g.on( _range = markedelements( mesh, "retina" ), _expr = cst( 0.90 ) );
+    n.on( _range = markedelements( mesh, "retina" ), _expr = cst( 1.0 ) );
 
     //----------------------------------------
     // 3) Build BVH
@@ -112,33 +141,35 @@ int main( int argc, char** argv )
     for ( int pid = 0; pid < Np; ++pid )
     {
         std::cout << fmt::format( "Tracing photon {}/{}...\n", pid + 1, Np );
-        // initialize photon
         Photon ph;
         ph.pos = launch[pid];
         ph.weight = 1.0;
 
-        // locate starting element
         node_t<double, 3> xref;
         bool found;
         mesh_type::index_type elt;
         boost::tie( found, elt, xref ) = loc->searchElement( ph.getNode() );
         if ( !found ) continue;
 
-        // trace photon until killed
         while ( ph.weight > 0 )
         {
-            std::cout << fmt::format( "Photon weight: {:.6f}\n", ph.weight );
+            std::cout << fmt::format( " Photon weight: {:.6f}\n", ph.weight );
             mesh_type::index_type oldElt = elt;
             double mua = mu_a.localToGlobal( oldElt, 0, 0 );
             double mus = mu_s.localToGlobal( oldElt, 0, 0 );
             double mut = mua + mus;
+            if ( mut <= 0 )
+            {
+                std::cout << " mu_t zero, photon escapes.\n";
+                break;
+            }
             double s = -std::log( uni( rng ) ) / mut;
-            std::cout << fmt::format( "Step size s: {:.6f}\n", s );
-            // --- Interface detection & fragmentwise deposition up to interface ---
+            std::cout << fmt::format( " Step size s: {:.6f}\n", s );
+
+            // interface candidates
             BVHRay<3> ray{ ph.pos, ph.dir, 0.0, s };
             using BContext = typename std::remove_reference<decltype( *bvh )>::type::IntersectContext;
             auto hits = bvh->intersect( _ray = ray, _context = BContext::all, _parallel = false );
-
             struct Cand
             {
                 double t;
@@ -152,13 +183,12 @@ int main( int argc, char** argv )
                 auto ce = h.primitiveId();
                 auto const& verts = emap( mesh->element( ce ).G() );
                 auto inter = RaySimplexIntersection<3>::intersect( ph.pos, ph.dir, verts );
-                if ( inter.t > 0 && inter.t < s )
-                    cands.push_back( { inter.t, ce, inter.faceId } );
+                if ( inter.t > 0 && inter.t < s ) cands.push_back( { inter.t, ce, inter.faceId } );
             }
             std::sort( cands.begin(), cands.end(), []( auto const& a, auto const& b )
                        { return a.t < b.t; } );
-            std::cout << fmt::format( "Found {} candidates for interface hits.\n", cands.size() );
-            // find first interface change
+            std::cout << fmt::format( " Found {} candidates for interface hits.\n", cands.size() );
+
             int iface_idx = -1;
             double n_old = n.localToGlobal( oldElt, 0, 0 );
             mesh_type::index_type nextElt = oldElt;
@@ -176,35 +206,33 @@ int main( int argc, char** argv )
                 }
             }
 
-            // deposit on each segment until interface
-            double remW = ph.weight;
-            double last_t = 0.0;
-            int end_idx = ( iface_idx >= 0 ? iface_idx : (int)cands.size() );
-            std::cout << fmt::format( "Depositing on {} segments before interface max segment index: {}\n", end_idx, cands.size() );
+            // fragmentwise deposition
+            double remW = ph.weight, last_t = 0;
+            int end_idx = iface_idx >= 0 ? iface_idx : (int)cands.size();
+            std::cout << fmt::format( " Depositing on {} segments before interface\n", end_idx );
             for ( int i = 0; i < end_idx; ++i )
             {
                 auto const& c = cands[i];
                 double ds = c.t - last_t;
-                auto e_id = c.elt;
-                double ma_i = mu_a.localToGlobal( e_id, 0, 0 ), ms_i = mu_s.localToGlobal( e_id, 0, 0 );
-                double mt_i = ma_i + ms_i;
+                auto id = c.elt;
+                double ma_i = mu_a.localToGlobal( id, 0, 0 ), ms_i = mu_s.localToGlobal( id, 0, 0 ), mt_i = ma_i + ms_i;
                 double Ai = remW * ( ma_i / mt_i ) * ( 1.0 - std::exp( -mt_i * ds ) );
-                absorption.plus_assign( e_id, 0, 0, Ai );
+                absorption.plus_assign( id, 0, 0, Ai );
                 remW *= std::exp( -mt_i * ds );
                 last_t = c.t;
-                std::cout << fmt::format( "Deposited {:.6f} on element {}, remaining weight: {:.6f}\n", Ai, e_id, remW );
+                std::cout << fmt::format( "Deposited {:.6f} on element {}, remW->{:.6f}\n", Ai, id, remW );
             }
-            // if no candidates and no iface, deposit entire step in oldElt
+
+            // no interface
             if ( cands.empty() && iface_idx < 0 )
             {
-                std::cout << "No interface candidates found, depositing entire step in old element.\n";
+                std::cout << " No interface candidates, full-step deposit.\n";
                 double Ai = remW * ( mua / mut ) * ( 1.0 - std::exp( -mut * s ) );
                 absorption.plus_assign( oldElt, 0, 0, Ai );
                 remW *= std::exp( -mut * s );
                 ph.pos += ph.dir * s;
                 ph.weight = remW;
                 if ( ph.weight <= 0 ) break;
-                // roulette & scatter
                 if ( ph.weight < Wcut )
                 {
                     if ( uni( rng ) <= pSurv )
@@ -216,18 +244,17 @@ int main( int argc, char** argv )
                 continue;
             }
 
-            // move to interface or end of last segment
-            double moved = ( iface_idx >= 0 ? cands[iface_idx].t : ( cands.back().t ) );
+            // move to interface or last hit
+            double moved = iface_idx >= 0 ? cands[iface_idx].t : cands.back().t;
             ph.pos += ph.dir * moved;
             ph.weight = remW;
             if ( ph.weight <= 0 ) break;
 
-            // if interface hit, handle reflection/refraction
+            // interface reflect/refract
             if ( iface_idx >= 0 )
             {
-                std::cout << fmt::format( "Hit interface at t = {:.6f}, moving to next element...\n", moved );
+                std::cout << fmt::format( " Hit interface at t={:.6f}\n", moved );
                 auto const& c = cands[iface_idx];
-                // compute normal
                 auto const& verts = emap( mesh->element( c.elt ).G() );
                 auto const& fv = RaySimplexIntersection<3>::faces[c.face];
                 Eigen::Vector3d v0 = verts.col( fv[0] ), v1 = verts.col( fv[1] ), v2 = verts.col( fv[2] );
@@ -254,18 +281,17 @@ int main( int argc, char** argv )
                 continue;
             }
 
-            // --- no interface but multiple fragments: continue beyond last hit
-            double lastHit = ( !cands.empty() ? cands.back().t : 0.0 );
+            // beyond last hit
+            double lastHit = !cands.empty() ? cands.back().t : 0;
             double tail = s - lastHit;
-            std::cout << fmt::format( "Continuing beyond last hit at t = {:.6f}, tail length = {:.6f}\n", lastHit, tail );
+            std::cout << fmt::format( " Continuing beyond last hit at t={:.6f}, tail={:.6f}\n", lastHit, tail );
             if ( tail > 1e-12 && remW > 0 )
             {
                 ph.pos += ph.dir * tail;
                 boost::tie( found, elt, xref ) = loc->searchElement( ph.getNode() );
                 if ( found )
                 {
-                    double ma1 = mu_a.localToGlobal( elt, 0, 0 ), ms1 = mu_s.localToGlobal( elt, 0, 0 );
-                    double mt1 = ma1 + ms1;
+                    double ma1 = mu_a.localToGlobal( elt, 0, 0 ), ms1 = mu_s.localToGlobal( elt, 0, 0 ), mt1 = ma1 + ms1;
                     double A1 = remW * ( ma1 / mt1 ) * ( 1.0 - std::exp( -mt1 * tail ) );
                     absorption.plus_assign( elt, 0, 0, A1 );
                     remW *= std::exp( -mt1 * tail );
