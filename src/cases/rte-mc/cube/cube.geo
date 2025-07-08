@@ -2,12 +2,12 @@
 SetFactory("OpenCASCADE");
 
 // –– mesh size parameters (coarse & uniform)
-lc = 0.5;
+lc = 0.05;
 Mesh.CharacteristicLengthMin = lc;
 Mesh.CharacteristicLengthMax = lc;
 
 // –– build a 1×1×1 cube
-Box(1) = { 0, 0, 0,   1, 1, 1 };
+Box(1) = { 0, 0, 0,   2, 2, 1 };
 
 // –– tag the volume and its faces for boundary conditions or extraction
 Physical Volume("Cube")    = { 1 };
