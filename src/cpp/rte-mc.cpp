@@ -42,9 +42,32 @@ struct Photon
 
 inline Feel::po::options_description makeOptions()
 {
-    Feel::po::options_description opts( "rte-mc bvh options" );
-    opts.add_options()( "diameter,d", po::value<double>()->default_value( 0.5 ), "beam diameter" )( "nphotons,n", po::value<int>()->default_value( 100000 ), "number of photons to trace" )( "wcut,w", po::value<double>()->default_value( 1e-4 ), "roulette threshold" )( "psurv,p", po::value<double>()->default_value( 0.1 ), "roulette survival probability" )( "seed,s", po::value<int>()->default_value( 12345 ), "random seed" );
-    return opts.add( Feel::feel_options() );
+    Feel::po::options_description options("rte-mc options");
+    options.add_options()("diameter,d", po::value<double>()->default_value(0.1),
+                          "diameter of the beam")(
+        "nphotons,n", po::value<int>()->default_value(100000),
+        "number of photons to trace")("mua, a",
+                                      po::value<double>()->default_value(0.01),
+                                      "absorption coefficient [1/mm]")(
+        "mus, s", po::value<double>()->default_value(10.0),
+        "scattering coefficient [1/mm]")(
+        "g", po::value<double>()->default_value(0.9), "anisotropy factor")(
+        "n_index", po::value<double>()->default_value(1.0),
+        "refractive index")("seed", po::value<int>()->default_value(1234),
+                            "random number generator seed")(
+        "wcut,w", po::value<double>()->default_value(1e-4),
+        "roulette threshold for photon weight")(
+        "psurv,p", po::value<double>()->default_value(0.5),
+        "roulette survival probability")(
+        "impactX, x", po::value<double>()->default_value(0.5),
+        "X coordinate of the beam impact point")(
+        "impactY, y", po::value<double>()->default_value(0.5),
+        "Y coordinate of the beam impact point")(
+        "impactZ, z", po::value<double>()->default_value(1.0),
+        "Z coordinate of the beam impact point")(
+        "output-name,o", po::value<std::string>()->default_value("default"),
+        "base name for output files");
+    return options.add(Feel::feel_options());
 }
 
 int main( int argc, char** argv )
@@ -72,10 +95,10 @@ int main( int argc, char** argv )
     auto n = V0->element();
 
     // optical properties
-    mu_a.on( _range = elements( mesh ), _expr = cst( 0.01 ) );
-    mu_s.on( _range = elements( mesh ), _expr = cst( 10.0 ) );
-    g.on( _range = elements( mesh ), _expr = cst( 0.90 ) );
-    n.on( _range = elements( mesh ), _expr = cst( 1.0 ) );
+    mu_a.on(_range = elements(mesh), _expr = cst(doption(_name = "mua")));
+    mu_s.on(_range = elements(mesh), _expr = cst(doption(_name = "mus")));
+    g.on(_range = elements(mesh), _expr = cst(doption(_name = "g")));
+    n.on(_range = elements(mesh), _expr = cst(doption(_name = "n_index")));
     mu_a.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 0.02 ) );
     mu_s.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 20.0 ) );
     g.on( _range = markedelements( mesh, "cornea" ), _expr = cst( 0.85 ) );
@@ -125,9 +148,11 @@ int main( int argc, char** argv )
         return eigen_vector_type<3>{ cx + r * std::cos( th ), cy + r * std::sin( th ), cz };
     };
     std::vector<eigen_vector_type<3>> launch;
-    launch.reserve( Np );
-    for ( int i = 0; i < Np; ++i )
-        launch.push_back( sample_disk( 0.5, 0.5, 1.0 ) );
+    double impactX = doption(_name = "impactX");
+    double impactY = doption(_name = "impactY");
+    double impactZ = doption(_name = "impactZ");
+    for (int i = 0; i < Np; ++i)
+        launch.push_back(sample_disk(impactX, impactY, impactZ));
 
     //----------------------------------------
     // 5) Prepare absorption map
@@ -140,7 +165,11 @@ int main( int argc, char** argv )
     //----------------------------------------
     for ( int pid = 0; pid < Np; ++pid )
     {
-        std::cout << fmt::format( "Tracing photon {}/{}...\n", pid + 1, Np );
+        // std::cout << fmt::format( "Tracing photon {}/{}...\n", pid + 1, Np );
+        // Print progress every 10%
+        if ( pid % ( Np / 10 ) == 0 )
+            std::cout << fmt::format( "Progress: {:.1f}%\n",
+                                      100.0 * pid / Np );
         Photon ph;
         ph.pos = launch[pid];
         ph.weight = 1.0;
@@ -149,11 +178,13 @@ int main( int argc, char** argv )
         bool found;
         mesh_type::index_type elt;
         boost::tie( found, elt, xref ) = loc->searchElement( ph.getNode() );
-        if ( !found ) continue;
+        if ( !found ) 
+        break; // blob fix
+        //continue;
 
         while ( ph.weight > 0 )
         {
-            std::cout << fmt::format( " Photon weight: {:.6f}\n", ph.weight );
+            // std::cout << fmt::format( " Photon weight: {:.6f}\n", ph.weight );
             mesh_type::index_type oldElt = elt;
             double mua = mu_a.localToGlobal( oldElt, 0, 0 );
             double mus = mu_s.localToGlobal( oldElt, 0, 0 );
@@ -164,7 +195,7 @@ int main( int argc, char** argv )
                 break;
             }
             double s = -std::log( uni( rng ) ) / mut;
-            std::cout << fmt::format( " Step size s: {:.6f}\n", s );
+            // std::cout << fmt::format( " Step size s: {:.6f}\n", s );
 
             // interface candidates
             BVHRay<3> ray{ ph.pos, ph.dir, 0.0, s };
@@ -187,7 +218,7 @@ int main( int argc, char** argv )
             }
             std::sort( cands.begin(), cands.end(), []( auto const& a, auto const& b )
                        { return a.t < b.t; } );
-            std::cout << fmt::format( " Found {} candidates for interface hits.\n", cands.size() );
+            // std::cout << fmt::format( " Found {} candidates for interface hits.\n", cands.size() );
 
             int iface_idx = -1;
             double n_old = n.localToGlobal( oldElt, 0, 0 );
@@ -209,7 +240,7 @@ int main( int argc, char** argv )
             // fragmentwise deposition
             double remW = ph.weight, last_t = 0;
             int end_idx = iface_idx >= 0 ? iface_idx : (int)cands.size();
-            std::cout << fmt::format( " Depositing on {} segments before interface\n", end_idx );
+            // std::cout << fmt::format( " Depositing on {} segments before interface\n", end_idx );
             for ( int i = 0; i < end_idx; ++i )
             {
                 auto const& c = cands[i];
@@ -220,13 +251,13 @@ int main( int argc, char** argv )
                 absorption.plus_assign( id, 0, 0, Ai );
                 remW *= std::exp( -mt_i * ds );
                 last_t = c.t;
-                std::cout << fmt::format( "Deposited {:.6f} on element {}, remW->{:.6f}\n", Ai, id, remW );
+                // std::cout << fmt::format( "Deposited {:.6f} on element {}, remW->{:.6f}\n", Ai, id, remW );
             }
 
             // no interface
             if ( cands.empty() && iface_idx < 0 )
             {
-                std::cout << " No interface candidates, full-step deposit.\n";
+                // std::cout << " No interface candidates, full-step deposit.\n";
                 double Ai = remW * ( mua / mut ) * ( 1.0 - std::exp( -mut * s ) );
                 absorption.plus_assign( oldElt, 0, 0, Ai );
                 remW *= std::exp( -mut * s );
@@ -253,7 +284,7 @@ int main( int argc, char** argv )
             // interface reflect/refract
             if ( iface_idx >= 0 )
             {
-                std::cout << fmt::format( " Hit interface at t={:.6f}\n", moved );
+                // std::cout << fmt::format( " Hit interface at t={:.6f}\n", moved );
                 auto const& c = cands[iface_idx];
                 auto const& verts = emap( mesh->element( c.elt ).G() );
                 auto const& fv = RaySimplexIntersection<3>::faces[c.face];
@@ -284,7 +315,7 @@ int main( int argc, char** argv )
             // beyond last hit
             double lastHit = !cands.empty() ? cands.back().t : 0;
             double tail = s - lastHit;
-            std::cout << fmt::format( " Continuing beyond last hit at t={:.6f}, tail={:.6f}\n", lastHit, tail );
+            // std::cout << fmt::format( " Continuing beyond last hit at t={:.6f}, tail={:.6f}\n", lastHit, tail );
             if ( tail > 1e-12 && remW > 0 )
             {
                 ph.pos += ph.dir * tail;
@@ -314,11 +345,16 @@ int main( int argc, char** argv )
     // 7) Normalize & export
     //----------------------------------------
     auto norm = V0->element();
-    norm.on( _range = elements( mesh ), _expr = idv( absorption ) / ( Np * meas() ) );
-    auto e = exporter( _mesh = mesh, _geo = "static" );
+    norm.on(_range = elements(mesh), _expr = idv(absorption) / (Np * meas()));
+    norm.save(_path = "save",
+              _name = "absorption-" + soption(_name = "output-name") + "-norm");
+    // Save field data
+    V0->save("save/" + soption(_name = "output-name") + "-Vh");
+
+    auto e = exporter(_mesh = mesh, _geo = "static");
     e->addRegions();
-    e->add( "absorption", absorption, std::set{ "element"s, "nodal"s } );
-    e->add( "absorption_norm", norm, std::set{ "element"s, "nodal"s } );
+    e->add("absorption", absorption, std::set{"element"s, "nodal"s});
+    e->add("absorption_norm", norm, std::set{"element"s, "nodal"s});
     e->save();
 
     std::cout << "Exported BVH-based absorption." << std::endl;
