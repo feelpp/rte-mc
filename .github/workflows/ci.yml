@@ -59,7 +59,7 @@ jobs:
           GIRDER_API_KEY: ${{ secrets.GIRDER }}
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: artifacts-wheel-${{ matrix.os }}
           path: dist/*.whl
@@ -180,7 +180,7 @@ jobs:
           cmake --build --preset default --target package
 
       - name: Upload Debian artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: artifacts-deb-${{ matrix.os }}
           path: build/default/assets/rte-mc-*
